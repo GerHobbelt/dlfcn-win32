@@ -685,8 +685,8 @@ int main()
     else
         printf( "SUCCESS\tClosed global handle.\n" );
 
-#ifdef _DEBUG
-    _CrtDumpMemoryLeaks();
+#if defined(_MSC_VER) && !defined(BUILD_MONOLITHIC)
+	_CrtDumpMemoryLeaks();
 #endif
     return 0;
 }
