@@ -47,10 +47,35 @@ typedef ULONG ULONG_PTR;
 #ifndef GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT
 #define GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT 0x2
 #endif
+#ifndef IMAGE_NT_OPTIONAL_HDR_MAGIC
+#ifdef _WIN64
+#define IMAGE_NT_OPTIONAL_HDR_MAGIC 0x20b
+#else
+#define IMAGE_NT_OPTIONAL_HDR_MAGIC 0x10b
+#endif
+#endif
+#ifndef IMAGE_DIRECTORY_ENTRY_IAT
+#define IMAGE_DIRECTORY_ENTRY_IAT 12
+#endif
+#ifndef LOAD_WITH_ALTERED_SEARCH_PATH
+#define LOAD_WITH_ALTERED_SEARCH_PATH 0x8
+#endif
 
 #ifdef _MSC_VER
+#if _MSC_VER >= 1000
 /* https://docs.microsoft.com/en-us/cpp/intrinsics/returnaddress */
 #pragma intrinsic( _ReturnAddress )
+#else
+/* On older version read return address from the value on stack pointer + 4 of
+ * the caller. Caller stack pointer is stored in EBP register but only when
+ * the EBP register is not optimized out. Usage of _alloca() function prevent
+ * EBP register optimization. Read value of EBP + 4 via inline assembly. And
+ * because inline assembly does not have a return value, put it into naked
+ * function which does not have prologue and epilogue and preserve registers.
+ */
+__declspec( naked ) static void *_ReturnAddress( void ) { __asm mov eax, [ebp+4] __asm ret }
+#define _ReturnAddress( ) ( _alloca(1), _ReturnAddress( ) )
+#endif
 #else
 /* https://gcc.gnu.org/onlinedocs/gcc/Return-Address.html */
 #ifndef _ReturnAddress
