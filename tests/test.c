@@ -83,7 +83,7 @@
  * If one test fails, the program terminates itself.
  */
 
-int main()
+int main(void)
 {
     void *global;
     void *library2;
