@@ -63,7 +63,12 @@ typedef ULONG ULONG_PTR;
 
 #ifdef _MSC_VER
 #if _MSC_VER >= 1000
-/* https://docs.microsoft.com/en-us/cpp/intrinsics/returnaddress */
+/* https://docs.microsoft.com/en-us/cpp/intrinsics/returnaddress
+ * When compiling in C++ mode, it is required to have C declaration for _ReturnAddress.
+ */
+#ifdef __cplusplus
+extern "C" void *_ReturnAddress(void);
+#endif
 #pragma intrinsic( _ReturnAddress )
 #else
 /* On older version read return address from the value on stack pointer + 4 of
@@ -72,7 +77,11 @@ typedef ULONG ULONG_PTR;
  * EBP register optimization. Read value of EBP + 4 via inline assembly. And
  * because inline assembly does not have a return value, put it into naked
  * function which does not have prologue and epilogue and preserve registers.
+ * When compiling in C++ mode, it is required to have C declaration for _alloca.
  */
+#ifdef __cplusplus
+extern "C" void *__cdecl _alloca(size_t);
+#endif
 __declspec( naked ) static void *_ReturnAddress( void ) { __asm mov eax, [ebp+4] __asm ret }
 #define _ReturnAddress( ) ( _alloca(1), _ReturnAddress( ) )
 #endif
@@ -235,7 +244,7 @@ static void save_err_ptr_str( const void *ptr, DWORD dwMessageId )
     for( i = 0; i < 2 * sizeof( ptr ); i++ )
     {
         num = (char) ( ( ( (ULONG_PTR) ptr ) >> ( 8 * sizeof( ptr ) - 4 * ( i + 1 ) ) ) & 0xF );
-        ptr_buf[2 + i] = num + ( ( num < 0xA ) ? '0' : ( 'A' - 0xA ) );
+        ptr_buf[2 + i] = (char) ( num + ( ( num < 0xA ) ? '0' : ( 'A' - 0xA ) ) );
     }
 
     ptr_buf[2 + 2 * sizeof( ptr )] = 0;
@@ -293,7 +302,7 @@ static HMODULE MyGetModuleHandleFromAddress( const void *addr )
     if( !failed )
     {
         /* If GetModuleHandleExA is available use it with GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS */
-        if( !GetModuleHandleExAPtr( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, addr, &hModule ) )
+        if( !GetModuleHandleExAPtr( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR) addr, &hModule ) )
             return NULL;
     }
     else
@@ -561,7 +570,7 @@ void *dlsym( void *handle, const char *name )
          */
         if( MyEnumProcessModules( hCurrentProc, NULL, 0, &dwSize ) != 0 )
         {
-            modules = malloc( dwSize );
+            modules = (HMODULE *) malloc( dwSize );
             if( modules )
             {
                 if( MyEnumProcessModules( hCurrentProc, modules, dwSize, &cbNeeded ) != 0 && dwSize == cbNeeded )
