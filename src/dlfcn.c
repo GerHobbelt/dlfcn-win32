@@ -316,6 +316,7 @@ static BOOL MyEnumProcessModules( HANDLE hProcess, HMODULE *lphModule, DWORD cb,
     static BOOL (WINAPI *EnumProcessModulesPtr)(HANDLE, HMODULE *, DWORD, LPDWORD) = NULL;
     static BOOL failed = FALSE;
     UINT uMode;
+    HMODULE kernel32;
     HMODULE psapi;
 
     if( failed )
@@ -324,9 +325,9 @@ static BOOL MyEnumProcessModules( HANDLE hProcess, HMODULE *lphModule, DWORD cb,
     if( EnumProcessModulesPtr == NULL )
     {
         /* Windows 7 and newer versions have K32EnumProcessModules in Kernel32.dll which is always pre-loaded */
-        psapi = GetModuleHandleA( "Kernel32.dll" );
-        if( psapi != NULL )
-            EnumProcessModulesPtr = (BOOL (WINAPI *)(HANDLE, HMODULE *, DWORD, LPDWORD)) (LPVOID) GetProcAddress( psapi, "K32EnumProcessModules" );
+        kernel32 = GetModuleHandleA( "Kernel32.dll" );
+        if( kernel32 != NULL )
+            EnumProcessModulesPtr = (BOOL (WINAPI *)(HANDLE, HMODULE *, DWORD, LPDWORD)) (LPVOID) GetProcAddress( kernel32, "K32EnumProcessModules" );
 
         /* Windows Vista and older version have EnumProcessModules in Psapi.dll which needs to be loaded */
         if( EnumProcessModulesPtr == NULL )
@@ -334,13 +335,13 @@ static BOOL MyEnumProcessModules( HANDLE hProcess, HMODULE *lphModule, DWORD cb,
             /* Do not let Windows display the critical-error-handler message box */
             uMode = MySetErrorMode( SEM_FAILCRITICALERRORS );
             psapi = LoadLibraryA( "Psapi.dll" );
+            MySetErrorMode( uMode );
             if( psapi != NULL )
             {
                 EnumProcessModulesPtr = (BOOL (WINAPI *)(HANDLE, HMODULE *, DWORD, LPDWORD)) (LPVOID) GetProcAddress( psapi, "EnumProcessModules" );
                 if( EnumProcessModulesPtr == NULL )
                     FreeLibrary( psapi );
             }
-            MySetErrorMode( uMode );
         }
 
         if( EnumProcessModulesPtr == NULL )
@@ -370,13 +371,13 @@ void *dlopen( const char *file, int mode )
          * symbol object must be provided. That object must be able to access
          * all symbols from the original program file, and any objects loaded
          * with the RTLD_GLOBAL flag.
-         * The return value from GetModuleHandle( ) allows us to retrieve
+         * The return value from GetModuleHandleA( ) allows us to retrieve
          * symbols only from the original program file. EnumProcessModules() is
          * used to access symbols from other libraries. For objects loaded
          * with the RTLD_LOCAL flag, we create our own list later on. They are
          * excluded from EnumProcessModules() iteration.
          */
-        hModule = GetModuleHandle( NULL );
+        hModule = GetModuleHandleA( NULL );
 
         if( !hModule )
             save_err_str( "(null)", GetLastError( ) );
@@ -469,7 +470,7 @@ int dlclose( void *handle )
     error_occurred = FALSE;
 
     /* dlopen(NULL, ...) does not call LoadLibrary(), so do not call FreeLibrary(). */
-    if( hModule == GetModuleHandle( NULL ) )
+    if( hModule == GetModuleHandleA( NULL ) )
         return 0;
 
     ret = FreeLibrary( hModule );
@@ -501,7 +502,7 @@ void *dlsym( void *handle, const char *name )
 
     symbol = NULL;
     hCaller = NULL;
-    hModule = GetModuleHandle( NULL );
+    hModule = GetModuleHandleA( NULL );
     dwMessageId = 0;
 
     if( handle == RTLD_DEFAULT )
@@ -554,7 +555,7 @@ void *dlsym( void *handle, const char *name )
 
         hCurrentProc = GetCurrentProcess( );
 
-        /* GetModuleHandle( NULL ) only returns the current program file. So
+        /* GetModuleHandleA( NULL ) only returns the current program file. So
          * if we want to get ALL loaded module including those in linked DLLs,
          * we have to use EnumProcessModules( ).
          */
@@ -705,18 +706,18 @@ static BOOL is_valid_address( const void *addr )
     /* check valid pointer */
     result = VirtualQuery( addr, &info, sizeof( info ) );
 
-    if( result == 0 || info.AllocationBase == NULL || info.AllocationProtect == 0 || info.AllocationProtect == PAGE_NOACCESS )
+    if( result != sizeof( info ) || info.AllocationBase == NULL || info.State == MEM_FREE || info.State == MEM_RESERVE || info.Protect == 0 || info.Protect == PAGE_NOACCESS )
         return FALSE;
 
     return TRUE;
 }
 
 #if defined(_M_ARM64) || defined(__aarch64__)
-static INT64 sign_extend(UINT64 value, UINT bits)
+static INT64 sign_extend( UINT64 value, UINT bits )
 {
     const UINT left = 64 - bits;
     const INT64 m1 = -1;
-    const INT64 wide = (INT64) (value << left);
+    const INT64 wide = (INT64) ( value << left );
     const INT64 sign = ( wide < 0 ) ? ( m1 << left ) : 0;
 
     return value | sign;
@@ -748,16 +749,18 @@ static INT64 sign_extend(UINT64 value, UINT bits)
 static BOOL is_import_thunk( const void *addr )
 {
 #if defined(_M_ARM64) || defined(__aarch64__)
-    ULONG opCode1 = * (ULONG *) ( (BYTE *) addr );
-    ULONG opCode2 = * (ULONG *) ( (BYTE *) addr + 4 );
-    ULONG opCode3 = * (ULONG *) ( (BYTE *) addr + 8 );
+    ULONG opCode1 = *(ULONG *) ( (BYTE *) addr );
+    ULONG opCode2 = *(ULONG *) ( (BYTE *) addr + 4 );
+    ULONG opCode3 = *(ULONG *) ( (BYTE *) addr + 8 );
 
-    return (opCode1 & 0x9f00001f) == 0x90000010    /* adrp x16, [page_offset] */
-        && (opCode2 & 0xffe003ff) == 0xf9400210    /* ldr  x16, [x16, offset] */
+    return ( opCode1 & 0x9f00001f ) == 0x90000010  /* adrp x16, [page_offset] */
+        && ( opCode2 & 0xffe003ff ) == 0xf9400210  /* ldr  x16, [x16, offset] */
         && opCode3 == 0xd61f0200                   /* br   x16 */
         ? TRUE : FALSE;
+#elif defined(_M_AMD64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
+    return *(USHORT *) addr == 0x25ff ? TRUE : FALSE;
 #else
-    return *(short *) addr == 0x25ff ? TRUE : FALSE;
+    return FALSE;
 #endif
 }
 
@@ -774,24 +777,24 @@ static void *get_address_from_import_address_table( void *iat, DWORD iat_size, c
      *  0x7ff772ae78c4 <+25764>: ldr    x16, [x16, #0xdc0]
      *  0x7ff772ae78c8 <+25768>: br     x16
      */
-    ULONG opCode1 = * (ULONG *) ( (BYTE *) addr );
-    ULONG opCode2 = * (ULONG *) ( (BYTE *) addr + 4 );
+    ULONG opCode1 = *(ULONG *) ( (BYTE *) addr );
+    ULONG opCode2 = *(ULONG *) ( (BYTE *) addr + 4 );
 
     /* Extract the offset from adrp instruction */
-    UINT64 pageLow2 = (opCode1 >> 29) & 3;
-    UINT64 pageHigh19 = (opCode1 >> 5) & ~(~0ull << 19);
-    INT64 page = sign_extend((pageHigh19 << 2) | pageLow2, 21) << 12;
+    UINT64 pageLow2 = ( opCode1 >> 29 ) & 3;
+    UINT64 pageHigh19 = ( opCode1 >> 5 ) & ~( ~0ull << 19 );
+    INT64 page = sign_extend( ( pageHigh19 << 2 ) | pageLow2, 21 ) << 12;
 
     /* Extract the offset from ldr instruction */
-    UINT64 offset = ((opCode2 >> 10) & ~(~0ull << 12)) << 3;
+    UINT64 offset = ( ( opCode2 >> 10 ) & ~( ~0ull << 12 ) ) << 3;
 
     /* Calculate the final address */
     BYTE *ptr = (BYTE *) ( (ULONG64) thkp & ~0xfffull ) + page + offset;
-#else
+#elif defined(_M_AMD64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
     /* Get offset from thunk table (after instruction 0xff 0x25)
      *   4018c8 <_VirtualQuery>: ff 25 4a 8a 00 00
      */
-    ULONG offset = *(ULONG *)( thkp + 2 );
+    ULONG offset = *(ULONG *) ( thkp + 2 );
 #if defined(_M_AMD64) || defined(__x86_64__)
     /* On 64 bit the offset is relative
      *      4018c8:   ff 25 4a 8a 00 00    jmpq    *0x8a4a(%rip)    # 40a318 <__imp_VirtualQuery>
@@ -799,13 +802,15 @@ static void *get_address_from_import_address_table( void *iat, DWORD iat_size, c
      *   100002f20:   ff 25 3a e1 ff ff    jmpq   *-0x1ec6(%rip)    # 0x100001060
      * So cast to signed LONG type
      */
-    BYTE *ptr = (BYTE *)( thkp + 6 + (LONG) offset );
+    BYTE *ptr = (BYTE *) ( thkp + 6 + (LONG) offset );
 #else
     /* On 32 bit the offset is absolute
      *   4019b4:    ff 25 90 71 40 00    jmp    *0x40719
      */
     BYTE *ptr = (BYTE *) offset;
 #endif
+#else
+    return NULL;
 #endif
 
     if( !is_valid_address( ptr ) || ptr < (BYTE *) iat || ptr > (BYTE *) iat + iat_size )
