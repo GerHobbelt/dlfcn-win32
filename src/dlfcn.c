@@ -468,6 +468,10 @@ int dlclose( void *handle )
 
     error_occurred = FALSE;
 
+    /* dlopen(NULL, ...) does not call LoadLibrary(), so do not call FreeLibrary(). */
+    if( hModule == GetModuleHandle( NULL ) )
+        return 0;
+
     ret = FreeLibrary( hModule );
 
     /* If the object was loaded with RTLD_LOCAL, remove it from list of local
